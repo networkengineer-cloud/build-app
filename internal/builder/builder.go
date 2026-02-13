@@ -387,15 +387,15 @@ func (b *Builder) buildBuildctlCommand(imageName string, repoConfig *repoconfig.
 	// Frontend
 	cmd += " --frontend=dockerfile.v0"
 	
-	// Context path (default to /workspace if not specified)
+	// Context path (default to /workspace if not specified or is ".")
 	contextPath := "/workspace"
-	if repoConfig.Context != "" && repoConfig.Context != "." {
+	if repoConfig.Context != "." {
 		contextPath = "/workspace/" + repoConfig.Context
 	}
 	cmd += " --local context=" + contextPath
 	
 	// Dockerfile path
-	if repoConfig.Dockerfile != "" && repoConfig.Dockerfile != "Dockerfile" {
+	if repoConfig.Dockerfile != "Dockerfile" {
 		// If custom dockerfile, specify the directory containing it
 		dockerfileDir := filepath.Dir("/workspace/" + repoConfig.Dockerfile)
 		cmd += " --local dockerfile=" + dockerfileDir
