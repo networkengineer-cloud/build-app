@@ -145,7 +145,7 @@ func (b *Builder) Build(ctx context.Context, req *BuildRequest) error {
 }
 
 func (b *Builder) cloneRepo(ctx context.Context, cloneURL, sha string) (string, error) {
-	ctx, span := b.tracer.Start(ctx, "builder.cloneRepo",
+	_, span := b.tracer.Start(ctx, "builder.cloneRepo",
 		trace.WithAttributes(
 			attribute.String("clone_url", cloneURL),
 			attribute.String("sha", sha),
