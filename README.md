@@ -159,6 +159,54 @@ Environment variables:
 | KUBE_NAMESPACE | No | default | Kubernetes namespace for build jobs |
 | CONTAINER_REGISTRY | No | ghcr.io | Container registry URL |
 
+### OpenTelemetry Configuration
+
+The service supports OpenTelemetry for observability (metrics, traces, and logs):
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| OTEL_SERVICE_NAME | No | build-app | Service name for telemetry |
+| SERVICE_VERSION | No | 1.0.0 | Service version |
+| OTEL_EXPORTER_OTLP_ENDPOINT | No | - | OTLP endpoint URL (e.g., localhost:4318) |
+| OTEL_TRACES_ENABLED | No | true | Enable/disable distributed tracing |
+| OTEL_METRICS_ENABLED | No | true | Enable/disable metrics collection |
+
+#### Metrics Collected
+
+- `build.duration` - Histogram of container build durations (seconds)
+- `build.count` - Counter of builds executed (by status: success/failure, type)
+- `webhook.count` - Counter of webhooks processed (by event type, status)
+- `http.server.duration` - HTTP request durations (via middleware)
+
+#### Traces
+
+Distributed traces are collected for:
+- Webhook request handling
+- Repository cloning
+- Build execution
+- GitHub API calls
+- GitOps updates
+
+#### Example Configuration
+
+To send telemetry to an OTLP collector:
+
+```yaml
+env:
+  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+    value: "otel-collector.monitoring.svc.cluster.local:4318"
+  - name: OTEL_SERVICE_NAME
+    value: "build-app"
+  - name: SERVICE_VERSION
+    value: "1.0.0"
+  - name: OTEL_TRACES_ENABLED
+    value: "true"
+  - name: OTEL_METRICS_ENABLED
+    value: "true"
+```
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` is not set, the service runs with no-op telemetry (no overhead).
+
 ## Image Tagging Strategy
 
 - **Push to main/master**: `main-{short-sha}` (e.g., `main-abc1234`)
