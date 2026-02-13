@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/utils/ptr"
 )
 
 // BuildRequest represents a build request
@@ -304,8 +305,8 @@ func (b *Builder) createBuildKitJob(req *BuildRequest, imageName, repoDir string
 			},
 		},
 		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: int32Ptr(3600), // Clean up after 1 hour
-			BackoffLimit:            int32Ptr(2),
+			TTLSecondsAfterFinished: ptr.To[int32](3600), // Clean up after 1 hour
+			BackoffLimit:            ptr.To[int32](2),
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
@@ -336,7 +337,7 @@ func (b *Builder) createBuildKitJob(req *BuildRequest, imageName, repoDir string
 								buildCmd,
 							},
 							SecurityContext: &corev1.SecurityContext{
-								Privileged: boolPtr(true),
+								Privileged: ptr.To(true),
 							},
 							Env: envVars,
 							VolumeMounts: []corev1.VolumeMount{
@@ -426,14 +427,6 @@ func (b *Builder) buildBuildctlCommand(imageName string, repoConfig *repoconfig.
 	cmd += " --output type=image,name=" + imageName + ",push=true,registry.insecure=false"
 	
 	return cmd
-}
-
-func boolPtr(b bool) *bool {
-	return &b
-}
-
-func int32Ptr(i int32) *int32 {
-	return &i
 }
 
 func getKubernetesClient() (*kubernetes.Clientset, error) {
