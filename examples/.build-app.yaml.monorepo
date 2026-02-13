@@ -1,0 +1,17 @@
+# Monorepo configuration example
+# Use when your application code is in a subdirectory
+
+# Build arguments
+buildArgs:
+  SERVICE_NAME: "api-service"
+  VERSION: "1.0.0"
+
+# Set context to the service directory
+context: services/api
+
+# Custom Dockerfile location
+dockerfile: services/api/Dockerfile
+
+# Environment variables
+env:
+  SERVICE_ENV: "production"

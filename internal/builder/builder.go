@@ -12,6 +12,7 @@ import (
 
 	"github.com/networkengineer-cloud/build-app/internal/config"
 	"github.com/networkengineer-cloud/build-app/internal/gitops"
+	"github.com/networkengineer-cloud/build-app/internal/repoconfig"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -70,6 +71,13 @@ func (b *Builder) Build(ctx context.Context, req *BuildRequest) error {
 	}
 	defer os.RemoveAll(tmpDir)
 
+	// Load repository configuration
+	repoConfig, err := repoconfig.Load(tmpDir)
+	if err != nil {
+		return fmt.Errorf("failed to load repository config: %w", err)
+	}
+	log.Printf("Loaded repository config from %s", tmpDir)
+
 	// Detect build strategy
 	strategy, err := b.detectBuildStrategy(tmpDir)
 	if err != nil {
@@ -84,7 +92,7 @@ func (b *Builder) Build(ctx context.Context, req *BuildRequest) error {
 
 	// Build image using BuildKit
 	imageName := fmt.Sprintf("%s/%s/%s:%s", b.config.ContainerRegistry, req.Org, req.Repo, req.ImageTag)
-	if err := b.buildWithBuildKit(ctx, req, imageName, tmpDir); err != nil {
+	if err := b.buildWithBuildKit(ctx, req, imageName, tmpDir, repoConfig); err != nil {
 		return fmt.Errorf("failed to build with BuildKit: %w", err)
 	}
 
@@ -212,13 +220,13 @@ CMD ["node", "index.js"]
 	return nil
 }
 
-func (b *Builder) buildWithBuildKit(ctx context.Context, req *BuildRequest, imageName, repoDir string) error {
+func (b *Builder) buildWithBuildKit(ctx context.Context, req *BuildRequest, imageName, repoDir string, repoConfig *repoconfig.Config) error {
 	if b.kubeClient == nil {
 		return fmt.Errorf("Kubernetes client not initialized")
 	}
 
 	// Create BuildKit Job
-	job := b.createBuildKitJob(req, imageName, repoDir)
+	job := b.createBuildKitJob(req, imageName, repoDir, repoConfig)
 
 	log.Printf("Creating BuildKit job: %s", job.Name)
 
@@ -255,12 +263,33 @@ func (b *Builder) buildWithBuildKit(ctx context.Context, req *BuildRequest, imag
 	}
 }
 
-func (b *Builder) createBuildKitJob(req *BuildRequest, imageName, repoDir string) *batchv1.Job {
+func (b *Builder) createBuildKitJob(req *BuildRequest, imageName, repoDir string, repoConfig *repoconfig.Config) *batchv1.Job {
 	jobName := fmt.Sprintf("build-%s-%s-%s", req.Repo, req.ImageTag, time.Now().Format("20060102-150405"))
 	jobName = strings.ReplaceAll(jobName, ".", "-")
 	jobName = strings.ToLower(jobName)
 	if len(jobName) > 63 {
 		jobName = jobName[:63]
+	}
+
+	// Build the buildctl command with config options
+	buildCmd := b.buildBuildctlCommand(imageName, repoConfig)
+
+	// Prepare environment variables for buildkit container
+	envVars := []corev1.EnvVar{
+		{
+			Name:  "DOCKER_CONFIG",
+			Value: "/root/.docker",
+		},
+	}
+
+	// Add custom environment variables from repo config
+	if repoConfig.HasEnv() {
+		for key, value := range repoConfig.Env {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  key,
+				Value: value,
+			})
+		}
 	}
 
 	return &batchv1.Job{
@@ -304,17 +333,12 @@ func (b *Builder) createBuildKitJob(req *BuildRequest, imageName, repoDir string
 							Command: []string{
 								"sh",
 								"-c",
-								"buildkitd --addr unix:///run/buildkit/buildkitd.sock & sleep 2 && buildctl --addr unix:///run/buildkit/buildkitd.sock build --frontend=dockerfile.v0 --local context=/workspace --local dockerfile=/workspace --output type=image,name=" + imageName + ",push=true,registry.insecure=false",
+								buildCmd,
 							},
 							SecurityContext: &corev1.SecurityContext{
 								Privileged: boolPtr(true),
 							},
-							Env: []corev1.EnvVar{
-								{
-									Name:  "DOCKER_CONFIG",
-									Value: "/root/.docker",
-								},
-							},
+							Env: envVars,
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "workspace",
@@ -353,6 +377,55 @@ func (b *Builder) createBuildKitJob(req *BuildRequest, imageName, repoDir string
 			},
 		},
 	}
+}
+
+// buildBuildctlCommand constructs the buildctl command with repository config options
+func (b *Builder) buildBuildctlCommand(imageName string, repoConfig *repoconfig.Config) string {
+	// Base command
+	cmd := "buildkitd --addr unix:///run/buildkit/buildkitd.sock & sleep 2 && buildctl --addr unix:///run/buildkit/buildkitd.sock build"
+	
+	// Frontend
+	cmd += " --frontend=dockerfile.v0"
+	
+	// Context path (default to /workspace if not specified)
+	contextPath := "/workspace"
+	if repoConfig.Context != "" && repoConfig.Context != "." {
+		contextPath = "/workspace/" + repoConfig.Context
+	}
+	cmd += " --local context=" + contextPath
+	
+	// Dockerfile path
+	if repoConfig.Dockerfile != "" && repoConfig.Dockerfile != "Dockerfile" {
+		// If custom dockerfile, specify the directory containing it
+		dockerfileDir := filepath.Dir("/workspace/" + repoConfig.Dockerfile)
+		cmd += " --local dockerfile=" + dockerfileDir
+		// Also specify the actual filename
+		cmd += " --opt filename=" + filepath.Base(repoConfig.Dockerfile)
+	} else {
+		cmd += " --local dockerfile=/workspace"
+	}
+	
+	// Build arguments
+	if repoConfig.HasBuildArgs() {
+		for key, value := range repoConfig.BuildArgs {
+			cmd += fmt.Sprintf(" --opt build-arg:%s=%s", key, value)
+		}
+	}
+	
+	// Target stage (if specified)
+	if repoConfig.Target != "" {
+		cmd += " --opt target=" + repoConfig.Target
+	}
+	
+	// Platform (if specified)
+	if repoConfig.Platform != "" {
+		cmd += " --opt platform=" + repoConfig.Platform
+	}
+	
+	// Output (push to registry)
+	cmd += " --output type=image,name=" + imageName + ",push=true,registry.insecure=false"
+	
+	return cmd
 }
 
 func boolPtr(b bool) *bool {

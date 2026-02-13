@@ -38,6 +38,60 @@ The service automatically detects the appropriate build strategy:
 3. **package.json exists**: Generate Node.js multi-stage Dockerfile
 4. **Otherwise**: Fail with error message
 
+## Repository Configuration
+
+You can customize the build process by creating a `.build-app.yaml` file at the root of your repository. This is optional - if not present, the service will use default behavior.
+
+### Configuration Options
+
+```yaml
+# Build arguments passed to Docker/BuildKit
+buildArgs:
+  VERSION: "1.0.0"
+  BUILD_DATE: "2024-01-01"
+
+# Environment variables set during build
+env:
+  NODE_ENV: "production"
+  DEBUG: "false"
+
+# Custom Dockerfile path (relative to repo root)
+# Default: Dockerfile
+dockerfile: docker/Dockerfile.prod
+
+# Build context path (relative to repo root)
+# Default: . (repo root)
+context: src
+
+# Target stage in multi-stage Dockerfile
+target: production
+
+# Target platform (e.g., linux/amd64, linux/arm64)
+platform: linux/amd64
+```
+
+### Example Configurations
+
+See the [`examples/`](examples/) directory for complete configuration examples:
+- **Basic**: Simple build args and environment variables
+- **Advanced**: Custom paths, targets, and platforms
+- **Monorepo**: Building from a subdirectory
+- **Multi-stage**: Building specific stages
+
+### Build Arguments in Dockerfile
+
+To use build arguments, reference them in your Dockerfile:
+
+```dockerfile
+ARG VERSION
+ARG BUILD_DATE
+
+FROM node:18
+LABEL version=${VERSION}
+LABEL build_date=${BUILD_DATE}
+# ... rest of your Dockerfile
+```
+
 ## Installation
 
 ### Prerequisites

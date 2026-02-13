@@ -1,0 +1,15 @@
+# Multi-stage build with target example
+# Build only a specific stage from your Dockerfile
+
+# Build arguments for the build stage
+buildArgs:
+  NODE_VERSION: "18"
+  NPM_TOKEN: "${NPM_TOKEN}"  # Can reference environment variables
+
+# Specify which stage to build
+# This corresponds to "FROM ... AS target-name" in Dockerfile
+target: builder
+
+# Environment variables
+env:
+  NODE_ENV: "production"
