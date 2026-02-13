@@ -122,7 +122,7 @@ func (b *Builder) cloneRepo(cloneURL, sha string) (string, error) {
 	// Clone the repository
 	cmd := exec.Command("git", "clone", cloneURL, tmpDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		return "", fmt.Errorf("git clone failed: %w, output: %s", err, string(output))
 	}
 
@@ -130,7 +130,7 @@ func (b *Builder) cloneRepo(cloneURL, sha string) (string, error) {
 	cmd = exec.Command("git", "checkout", sha)
 	cmd.Dir = tmpDir
 	if output, err := cmd.CombinedOutput(); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		return "", fmt.Errorf("git checkout failed: %w, output: %s", err, string(output))
 	}
 

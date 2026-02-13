@@ -46,7 +46,7 @@ func TestDetectBuildStrategy(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Create test files
 			for _, file := range tt.files {
@@ -114,7 +114,7 @@ func TestEnsureDockerfile(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Create existing files
 			for _, file := range tt.existingFiles {
