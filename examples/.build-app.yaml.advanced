@@ -1,0 +1,30 @@
+# Advanced build configuration example
+# Place this file at the root of your repository as .build-app.yaml
+
+# Build arguments passed to Docker build
+# These can be referenced in your Dockerfile using ARG instructions
+buildArgs:
+  VERSION: "2.0.0"
+  ENVIRONMENT: "staging"
+  GO_VERSION: "1.23"
+
+# Environment variables set during the build process
+env:
+  LOG_LEVEL: "debug"
+  API_ENDPOINT: "https://api.staging.example.com"
+
+# Custom Dockerfile path (relative to repository root)
+# Default: Dockerfile
+dockerfile: build/Dockerfile.prod
+
+# Build context path (relative to repository root)
+# Default: . (repository root)
+context: src
+
+# Target stage in multi-stage Dockerfile
+# Useful for building specific stages
+target: production
+
+# Target platform for the build
+# Examples: linux/amd64, linux/arm64, linux/arm/v7
+platform: linux/amd64
