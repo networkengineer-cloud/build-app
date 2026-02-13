@@ -117,7 +117,7 @@ platform: linux/amd64
 			if err != nil {
 				t.Fatalf("Failed to create temp dir: %v", err)
 			}
-			defer os.RemoveAll(tmpDir)
+			defer func() { _ = os.RemoveAll(tmpDir) }()
 
 			// Create config file if yaml is provided
 			if tt.configYAML != "" {

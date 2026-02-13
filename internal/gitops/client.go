@@ -33,7 +33,7 @@ func (c *Client) UpdateDeployment(ctx context.Context, org, repo, imageName stri
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	log.Printf("Cloning GitOps repository to %s", tmpDir)
 

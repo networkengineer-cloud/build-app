@@ -70,7 +70,7 @@ func (b *Builder) Build(ctx context.Context, req *BuildRequest) error {
 	if err != nil {
 		return fmt.Errorf("failed to clone repo: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Load repository configuration
 	repoConfig, err := repoconfig.Load(tmpDir)
@@ -223,7 +223,7 @@ CMD ["node", "index.js"]
 
 func (b *Builder) buildWithBuildKit(ctx context.Context, req *BuildRequest, imageName, repoDir string, repoConfig *repoconfig.Config) error {
 	if b.kubeClient == nil {
-		return fmt.Errorf("Kubernetes client not initialized")
+		return fmt.Errorf("kubernetes client not initialized")
 	}
 
 	// Create BuildKit Job

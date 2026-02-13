@@ -47,7 +47,7 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error reading body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	// Validate signature
 	signature := r.Header.Get("X-Hub-Signature-256")
@@ -88,7 +88,7 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "Webhook processed successfully")
+	_, _ = fmt.Fprintf(w, "Webhook processed successfully")
 }
 
 func (h *Handler) validateSignature(body []byte, signature string) bool {
@@ -154,7 +154,7 @@ func (h *Handler) handlePush(body []byte) error {
 	}
 
 	if err := h.builder.Build(ctx, buildReq); err != nil {
-		h.github.UpdateCommitStatus(ctx, org, repo, sha, "failure", fmt.Sprintf("Build failed: %v", err))
+		_ = h.github.UpdateCommitStatus(ctx, org, repo, sha, "failure", fmt.Sprintf("Build failed: %v", err))
 		return fmt.Errorf("build failed: %w", err)
 	}
 
@@ -223,7 +223,7 @@ func (h *Handler) handlePullRequest(body []byte) error {
 	}
 
 	if err := h.builder.Build(ctx, buildReq); err != nil {
-		h.github.UpdateCommitStatus(ctx, org, repo, sha, "failure", fmt.Sprintf("Build failed: %v", err))
+		_ = h.github.UpdateCommitStatus(ctx, org, repo, sha, "failure", fmt.Sprintf("Build failed: %v", err))
 		return fmt.Errorf("build failed: %w", err)
 	}
 
@@ -292,7 +292,7 @@ func (h *Handler) handleCreate(body []byte) error {
 	}
 
 	if err := h.builder.Build(ctx, buildReq); err != nil {
-		h.github.UpdateCommitStatus(ctx, org, repo, sha, "failure", fmt.Sprintf("Build failed: %v", err))
+		_ = h.github.UpdateCommitStatus(ctx, org, repo, sha, "failure", fmt.Sprintf("Build failed: %v", err))
 		return fmt.Errorf("build failed: %w", err)
 	}
 
