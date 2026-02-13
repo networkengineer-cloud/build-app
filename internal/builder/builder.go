@@ -181,7 +181,7 @@ func (b *Builder) ensureDockerfile(repoDir string, strategy BuildStrategy) error
 	var dockerfileContent string
 	switch strategy {
 	case StrategyGo:
-		dockerfileContent = `FROM golang:1.23 AS builder
+		dockerfileContent = `FROM golang:1.26 AS builder
 WORKDIR /app
 COPY go.* ./
 RUN go mod download
@@ -196,13 +196,13 @@ EXPOSE 8080
 CMD ["./server"]
 `
 	case StrategyNodeJS:
-		dockerfileContent = `FROM node:18-alpine AS builder
+		dockerfileContent = `FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --only=production
 COPY . .
 
-FROM node:18-alpine
+FROM node:20-alpine
 WORKDIR /app
 COPY --from=builder /app .
 EXPOSE 3000
