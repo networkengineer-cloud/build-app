@@ -11,10 +11,15 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/networkengineer-cloud/build-app/internal/builder"
 	"github.com/networkengineer-cloud/build-app/internal/config"
 	"github.com/networkengineer-cloud/build-app/internal/github"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Handler manages webhook requests
@@ -22,21 +27,43 @@ type Handler struct {
 	config  *config.Config
 	builder *builder.Builder
 	github  *github.Client
+	tracer  trace.Tracer
+	metrics struct {
+		webhookCounter   metric.Int64Counter
+		buildDuration    metric.Float64Histogram
+		buildCounter     metric.Int64Counter
+	}
 }
 
 // NewHandler creates a new webhook handler
-func NewHandler(cfg *config.Config) *Handler {
-	return &Handler{
+func NewHandler(cfg *config.Config, tel interface{
+	Tracer() trace.Tracer
+	WebhookCounter() metric.Int64Counter
+	BuildDuration() metric.Float64Histogram
+	BuildCounter() metric.Int64Counter
+}) *Handler {
+	h := &Handler{
 		config:  cfg,
-		builder: builder.NewBuilder(cfg),
+		builder: builder.NewBuilder(cfg, tel.Tracer()),
 		github:  github.NewClient(cfg.GitHubToken),
+		tracer:  tel.Tracer(),
 	}
+	h.metrics.webhookCounter = tel.WebhookCounter()
+	h.metrics.buildDuration = tel.BuildDuration()
+	h.metrics.buildCounter = tel.BuildCounter()
+	return h
 }
 
 // HandleWebhook processes incoming GitHub webhooks
 func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
+	ctx, span := h.tracer.Start(r.Context(), "webhook.HandleWebhook")
+	defer span.End()
+
+	startTime := time.Now()
+	
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		span.SetStatus(codes.Error, "method not allowed")
 		return
 	}
 
@@ -45,6 +72,8 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("Error reading body: %v", err)
 		http.Error(w, "Error reading body", http.StatusBadRequest)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to read body")
 		return
 	}
 	defer func() { _ = r.Body.Close() }()
@@ -54,39 +83,74 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	if !h.validateSignature(body, signature) {
 		log.Printf("Invalid signature")
 		http.Error(w, "Invalid signature", http.StatusUnauthorized)
+		span.SetStatus(codes.Error, "invalid signature")
+		if h.metrics.webhookCounter != nil {
+			h.metrics.webhookCounter.Add(ctx, 1, 
+				metric.WithAttributes(
+					attribute.String("event", "unknown"),
+					attribute.String("status", "invalid_signature"),
+				),
+			)
+		}
 		return
 	}
 
 	// Get event type
 	event := r.Header.Get("X-GitHub-Event")
 	log.Printf("Received webhook event: %s", event)
+	span.SetAttributes(attribute.String("event_type", event))
+
+	// Track webhook processing
+	success := true
+	defer func() {
+		if h.metrics.webhookCounter != nil {
+			h.metrics.webhookCounter.Add(ctx, 1,
+				metric.WithAttributes(
+					attribute.String("event", event),
+					attribute.Bool("success", success),
+				),
+			)
+		}
+	}()
 
 	// Process based on event type
 	switch event {
 	case "push":
-		if err := h.handlePush(body); err != nil {
+		if err := h.handlePush(ctx, body); err != nil {
 			log.Printf("Error handling push: %v", err)
 			http.Error(w, "Error processing push", http.StatusInternalServerError)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to handle push")
+			success = false
 			return
 		}
 	case "pull_request":
-		if err := h.handlePullRequest(body); err != nil {
+		if err := h.handlePullRequest(ctx, body); err != nil {
 			log.Printf("Error handling pull request: %v", err)
 			http.Error(w, "Error processing pull request", http.StatusInternalServerError)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to handle pull request")
+			success = false
 			return
 		}
 	case "create":
-		if err := h.handleCreate(body); err != nil {
+		if err := h.handleCreate(ctx, body); err != nil {
 			log.Printf("Error handling create: %v", err)
 			http.Error(w, "Error processing create", http.StatusInternalServerError)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to handle create")
+			success = false
 			return
 		}
 	default:
 		log.Printf("Unsupported event type: %s", event)
 		w.WriteHeader(http.StatusOK)
+		span.SetAttributes(attribute.String("result", "unsupported_event"))
 		return
 	}
 
+	span.SetStatus(codes.Ok, "webhook processed successfully")
+	span.SetAttributes(attribute.Float64("processing_time_seconds", time.Since(startTime).Seconds()))
 	w.WriteHeader(http.StatusOK)
 	_, _ = fmt.Fprintf(w, "Webhook processed successfully")
 }
@@ -107,7 +171,7 @@ func (h *Handler) validateSignature(body []byte, signature string) bool {
 	return hmac.Equal([]byte(signature), []byte(expectedMAC))
 }
 
-func (h *Handler) handlePush(body []byte) error {
+func (h *Handler) handlePush(ctx context.Context, body []byte) error {
 	var payload struct {
 		Ref        string `json:"ref"`
 		After      string `json:"after"`
@@ -134,7 +198,6 @@ func (h *Handler) handlePush(body []byte) error {
 	log.Printf("Processing push: %s/%s branch=%s sha=%s", org, repo, branch, sha[:7])
 
 	// Update GitHub status to pending
-	ctx := context.Background()
 	if err := h.github.UpdateCommitStatus(ctx, org, repo, sha, "pending", "Building container image..."); err != nil {
 		log.Printf("Warning: failed to update commit status: %v", err)
 	}
@@ -166,7 +229,7 @@ func (h *Handler) handlePush(body []byte) error {
 	return nil
 }
 
-func (h *Handler) handlePullRequest(body []byte) error {
+func (h *Handler) handlePullRequest(ctx context.Context, body []byte) error {
 	var payload struct {
 		Action      string `json:"action"`
 		Number      int    `json:"number"`
@@ -203,7 +266,6 @@ func (h *Handler) handlePullRequest(body []byte) error {
 	log.Printf("Processing PR: %s/%s pr=%d sha=%s", org, repo, payload.Number, sha[:7])
 
 	// Update GitHub status to pending
-	ctx := context.Background()
 	if err := h.github.UpdateCommitStatus(ctx, org, repo, sha, "pending", "Building container image..."); err != nil {
 		log.Printf("Warning: failed to update commit status: %v", err)
 	}
@@ -235,7 +297,7 @@ func (h *Handler) handlePullRequest(body []byte) error {
 	return nil
 }
 
-func (h *Handler) handleCreate(body []byte) error {
+func (h *Handler) handleCreate(ctx context.Context, body []byte) error {
 	var payload struct {
 		RefType string `json:"ref_type"`
 		Ref     string `json:"ref"`
@@ -267,7 +329,6 @@ func (h *Handler) handleCreate(body []byte) error {
 	log.Printf("Processing tag: %s/%s tag=%s", org, repo, tag)
 
 	// For tags, we need to get the commit SHA
-	ctx := context.Background()
 	sha, err := h.github.GetTagSHA(ctx, org, repo, tag)
 	if err != nil {
 		return fmt.Errorf("failed to get tag SHA: %w", err)

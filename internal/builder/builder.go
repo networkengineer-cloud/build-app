@@ -13,6 +13,9 @@ import (
 	"github.com/networkengineer-cloud/build-app/internal/config"
 	"github.com/networkengineer-cloud/build-app/internal/gitops"
 	"github.com/networkengineer-cloud/build-app/internal/repoconfig"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,10 +43,11 @@ type Builder struct {
 	config     *config.Config
 	kubeClient *kubernetes.Clientset
 	gitops     *gitops.Client
+	tracer     trace.Tracer
 }
 
 // NewBuilder creates a new builder
-func NewBuilder(cfg *config.Config) *Builder {
+func NewBuilder(cfg *config.Config, tracer trace.Tracer) *Builder {
 	kubeClient, err := getKubernetesClient()
 	if err != nil {
 		log.Printf("Warning: failed to create Kubernetes client: %v", err)
@@ -58,16 +62,30 @@ func NewBuilder(cfg *config.Config) *Builder {
 		config:     cfg,
 		kubeClient: kubeClient,
 		gitops:     gitopsClient,
+		tracer:     tracer,
 	}
 }
 
 // Build executes the build process
 func (b *Builder) Build(ctx context.Context, req *BuildRequest) error {
+	ctx, span := b.tracer.Start(ctx, "builder.Build",
+		trace.WithAttributes(
+			attribute.String("org", req.Org),
+			attribute.String("repo", req.Repo),
+			attribute.String("sha", req.SHA),
+			attribute.String("image_tag", req.ImageTag),
+		),
+	)
+	defer span.End()
+
+	startTime := time.Now()
 	log.Printf("Starting build for %s/%s with tag %s", req.Org, req.Repo, req.ImageTag)
 
 	// Clone repository
-	tmpDir, err := b.cloneRepo(req.CloneURL, req.SHA)
+	tmpDir, err := b.cloneRepo(ctx, req.CloneURL, req.SHA)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to clone repo")
 		return fmt.Errorf("failed to clone repo: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
@@ -75,6 +93,8 @@ func (b *Builder) Build(ctx context.Context, req *BuildRequest) error {
 	// Load repository configuration
 	repoConfig, err := repoconfig.Load(tmpDir)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to load repository config")
 		return fmt.Errorf("failed to load repository config: %w", err)
 	}
 	log.Printf("Loaded repository config from %s", tmpDir)
@@ -82,36 +102,56 @@ func (b *Builder) Build(ctx context.Context, req *BuildRequest) error {
 	// Detect build strategy
 	strategy, err := b.detectBuildStrategy(tmpDir)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to detect build strategy")
 		return fmt.Errorf("failed to detect build strategy: %w", err)
 	}
 	log.Printf("Detected build strategy: %s", strategy)
+	span.SetAttributes(attribute.String("build_strategy", string(strategy)))
 
 	// Ensure Dockerfile exists
 	if err := b.ensureDockerfile(tmpDir, strategy); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to ensure Dockerfile")
 		return fmt.Errorf("failed to ensure Dockerfile: %w", err)
 	}
 
 	// Build image using BuildKit
 	imageName := fmt.Sprintf("%s/%s/%s:%s", b.config.ContainerRegistry, req.Org, req.Repo, req.ImageTag)
 	if err := b.buildWithBuildKit(ctx, req, imageName, tmpDir, repoConfig); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to build with BuildKit")
 		return fmt.Errorf("failed to build with BuildKit: %w", err)
 	}
 
-	log.Printf("Successfully built image: %s", imageName)
+	log.Printf("Successfully built image: %s in %v", imageName, time.Since(startTime))
+	span.SetAttributes(
+		attribute.String("image_name", imageName),
+		attribute.Float64("build_duration_seconds", time.Since(startTime).Seconds()),
+	)
 
 	// Update GitOps repository if configured
 	if b.gitops != nil && !req.IsPR {
 		if err := b.gitops.UpdateDeployment(ctx, req.Org, req.Repo, imageName); err != nil {
 			log.Printf("Warning: failed to update GitOps repo: %v", err)
+			span.RecordError(err)
 		} else {
 			log.Printf("Successfully updated GitOps repository")
 		}
 	}
 
+	span.SetStatus(codes.Ok, "build completed successfully")
 	return nil
 }
 
-func (b *Builder) cloneRepo(cloneURL, sha string) (string, error) {
+func (b *Builder) cloneRepo(ctx context.Context, cloneURL, sha string) (string, error) {
+	ctx, span := b.tracer.Start(ctx, "builder.cloneRepo",
+		trace.WithAttributes(
+			attribute.String("clone_url", cloneURL),
+			attribute.String("sha", sha),
+		),
+	)
+	defer span.End()
 	tmpDir, err := os.MkdirTemp("", "build-*")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp dir: %w", err)

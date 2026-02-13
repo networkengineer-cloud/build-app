@@ -10,7 +10,30 @@ import (
 	"testing"
 
 	"github.com/networkengineer-cloud/build-app/internal/config"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// mockTelemetry provides a no-op telemetry for testing
+type mockTelemetry struct{}
+
+func (m *mockTelemetry) Tracer() trace.Tracer {
+	return otel.Tracer("test")
+}
+
+func (m *mockTelemetry) WebhookCounter() metric.Int64Counter {
+	return noop.Int64Counter{}
+}
+
+func (m *mockTelemetry) BuildDuration() metric.Float64Histogram {
+	return noop.Float64Histogram{}
+}
+
+func (m *mockTelemetry) BuildCounter() metric.Int64Counter {
+	return noop.Int64Counter{}
+}
 
 func TestValidateSignature(t *testing.T) {
 	secret := "test-secret"
@@ -18,7 +41,7 @@ func TestValidateSignature(t *testing.T) {
 		WebhookSecret: secret,
 		GitHubToken:   "test-token",
 	}
-	handler := NewHandler(cfg)
+	handler := NewHandler(cfg, &mockTelemetry{})
 
 	tests := []struct {
 		name      string
@@ -71,7 +94,7 @@ func TestHandleWebhook_Method(t *testing.T) {
 		WebhookSecret: "test-secret",
 		GitHubToken:   "test-token",
 	}
-	handler := NewHandler(cfg)
+	handler := NewHandler(cfg, &mockTelemetry{})
 
 	tests := []struct {
 		name       string
@@ -115,7 +138,7 @@ func TestHandleWebhook_UnsupportedEvent(t *testing.T) {
 		WebhookSecret: "test-secret",
 		GitHubToken:   "test-token",
 	}
-	handler := NewHandler(cfg)
+	handler := NewHandler(cfg, &mockTelemetry{})
 
 	body := []byte(`{}`)
 	mac := hmac.New(sha256.New, []byte(cfg.WebhookSecret))

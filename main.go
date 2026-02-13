@@ -10,20 +10,45 @@ import (
 	"time"
 
 	"github.com/networkengineer-cloud/build-app/internal/config"
+	"github.com/networkengineer-cloud/build-app/internal/telemetry"
 	"github.com/networkengineer-cloud/build-app/internal/webhook"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 func main() {
+	ctx := context.Background()
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Create webhook handler
-	handler := webhook.NewHandler(cfg)
+	// Initialize telemetry
+	telConfig := telemetry.Config{
+		ServiceName:     getEnv("OTEL_SERVICE_NAME", "build-app"),
+		ServiceVersion:  getEnv("SERVICE_VERSION", "1.0.0"),
+		OTLPEndpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		TracesEnabled:   getEnvBool("OTEL_TRACES_ENABLED", true),
+		MetricsEnabled:  getEnvBool("OTEL_METRICS_ENABLED", true),
+	}
 
-	// Setup HTTP server
+	tel, err := telemetry.Initialize(ctx, telConfig)
+	if err != nil {
+		log.Fatalf("Failed to initialize telemetry: %v", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tel.Shutdown(shutdownCtx); err != nil {
+			log.Printf("Failed to shutdown telemetry: %v", err)
+		}
+	}()
+
+	// Create webhook handler with telemetry
+	handler := webhook.NewHandler(cfg, tel)
+
+	// Setup HTTP server with Otel instrumentation
 	mux := http.NewServeMux()
 	mux.HandleFunc("/webhook", handler.HandleWebhook)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -31,9 +56,12 @@ func main() {
 		_, _ = w.Write([]byte("OK"))
 	})
 
+	// Wrap mux with OpenTelemetry instrumentation
+	wrappedHandler := otelhttp.NewHandler(mux, "build-app")
+
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      mux,
+		Handler:      wrappedHandler,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -53,12 +81,27 @@ func main() {
 	<-quit
 
 	log.Println("Shutting down server...")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 
 	log.Println("Server exited")
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value == "true" || value == "1"
 }
