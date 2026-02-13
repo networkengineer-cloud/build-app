@@ -84,7 +84,7 @@ func (b *Builder) Build(ctx context.Context, req *BuildRequest) error {
 
 	// Build image using BuildKit
 	imageName := fmt.Sprintf("%s/%s/%s:%s", b.config.ContainerRegistry, req.Org, req.Repo, req.ImageTag)
-	if err := b.buildWithKaniko(ctx, req, imageName, tmpDir); err != nil {
+	if err := b.buildWithBuildKit(ctx, req, imageName, tmpDir); err != nil {
 		return fmt.Errorf("failed to build with BuildKit: %w", err)
 	}
 
@@ -172,7 +172,7 @@ func (b *Builder) ensureDockerfile(repoDir string, strategy BuildStrategy) error
 	var dockerfileContent string
 	switch strategy {
 	case StrategyGo:
-		dockerfileContent = `FROM golang:1.21 AS builder
+		dockerfileContent = `FROM golang:1.23 AS builder
 WORKDIR /app
 COPY go.* ./
 RUN go mod download
@@ -212,7 +212,7 @@ CMD ["node", "index.js"]
 	return nil
 }
 
-func (b *Builder) buildWithKaniko(ctx context.Context, req *BuildRequest, imageName, repoDir string) error {
+func (b *Builder) buildWithBuildKit(ctx context.Context, req *BuildRequest, imageName, repoDir string) error {
 	if b.kubeClient == nil {
 		return fmt.Errorf("Kubernetes client not initialized")
 	}
