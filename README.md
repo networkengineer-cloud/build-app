@@ -6,6 +6,7 @@ A Kubernetes-native webhook service that automatically builds and deploys contai
 
 - **GitHub Webhook Integration**: Automatically triggered by push, pull request, and tag events
 - **Zero Configuration**: Automatically detects build strategy (Dockerfile, Go, Node.js)
+- **Repository Configuration**: Optional `.build-app.yaml` for build customization ([docs](docs/CONFIGURATION.md))
 - **Secure**: GitHub webhook signature validation
 - **BuildKit-based Builds**: Builds container images using Docker's modern BuildKit engine
 - **GitOps Integration**: Automatically updates deployment manifests
@@ -225,6 +226,12 @@ kubectl logs job/build-<repo>-<tag>-<timestamp> -n build-app -c buildkit
 1. **Webhook signature validation fails**: Ensure `WEBHOOK_SECRET` matches GitHub webhook secret
 2. **Build job fails**: Check BuildKit logs and ensure Docker registry credentials are correct
 3. **GitOps update fails**: Verify `GITOPS_TOKEN` has write access to GitOps repository
+
+## Documentation
+
+- **[Configuration Guide](docs/CONFIGURATION.md)** - Customize builds with `.build-app.yaml`
+- **[Setup Guide](SETUP.md)** - Detailed deployment instructions
+- **[Contributing](CONTRIBUTING.md)** - Development guidelines
 
 ## License
 
